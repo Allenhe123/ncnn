@@ -14,6 +14,7 @@
 
 #include <stdio.h>
 #include <vector>
+#include <iostream>
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
@@ -42,8 +43,8 @@ static int detect_yolov3(const cv::Mat& bgr, std::vector<Object>& objects)
     // original pretrained model from https://github.com/eric612/MobileNet-YOLO
     // https://github.com/eric612/MobileNet-YOLO/blob/master/models/yolov3/mobilenet_yolov3_lite_deploy.prototxt
     // https://github.com/eric612/MobileNet-YOLO/blob/master/models/yolov3/mobilenet_yolov3_lite_deploy.caffemodel
-    yolov3.load_param("mobilenet_yolov3.param");
-    yolov3.load_model("mobilenet_yolov3.bin");
+    yolov3.load_param("mobilenet_yolov3_lite_deploy.param");
+    yolov3.load_model("mobilenet_yolov3_lite_deploy.bin");
 
     const int target_size = 320;
 
@@ -84,7 +85,7 @@ static int detect_yolov3(const cv::Mat& bgr, std::vector<Object>& objects)
     return 0;
 }
 
-static void draw_objects(const cv::Mat& bgr, const std::vector<Object>& objects)
+static void draw_objects(const cv::Mat& bgr, const std::vector<Object>& objects, bool video)
 {
     static const char* class_names[] = {"background",
         "aeroplane", "bicycle", "bird", "boat",
@@ -98,6 +99,7 @@ static void draw_objects(const cv::Mat& bgr, const std::vector<Object>& objects)
     for (size_t i = 0; i < objects.size(); i++)
     {
         const Object& obj = objects[i];
+        if (obj.prob < 0.3) continue;
 
         fprintf(stderr, "%d = %.5f at %.2f %.2f %.2f x %.2f\n", obj.label, obj.prob,
                 obj.rect.x, obj.rect.y, obj.rect.width, obj.rect.height);
@@ -126,38 +128,70 @@ static void draw_objects(const cv::Mat& bgr, const std::vector<Object>& objects)
     }
 
     cv::imshow("image", image);
-    cv::waitKey(0);
+
+    if (!video)
+        cv::waitKey(0);
+    else 
+        cv::waitKey(10);;
 }
 
 int main(int argc, char** argv)
 {
-    if (argc != 2)
+    if (argc != 2 && argc != 3)
     {
-        fprintf(stderr, "Usage: %s [imagepath]\n", argv[0]);
+        fprintf(stderr, "Usage: %s [imagepath] [option]\n", argv[0]);
         return -1;
     }
 
+    bool use_video = false;
+    if (argc == 3)  use_video = true;
     const char* imagepath = argv[1];
 
-    cv::Mat m = cv::imread(imagepath, 1);
-    if (m.empty())
+    if (use_video)
     {
-        fprintf(stderr, "cv::imread %s failed\n", imagepath);
-        return -1;
+        cv::VideoCapture cap_video;
+        cap_video = cv::VideoCapture(imagepath);
+        cv::Mat frame_video;
+         while (true) 
+         {
+            cap_video >> frame_video;
+            if (frame_video.empty())  break;
+
+#if NCNN_VULKAN
+            ncnn::create_gpu_instance();
+#endif // NCNN_VULKAN
+
+            std::vector<Object> objects;
+            detect_yolov3(frame_video, objects);
+
+#if NCNN_VULKAN
+            ncnn::destroy_gpu_instance();
+#endif // NCNN_VULKAN
+
+            draw_objects(frame_video, objects, use_video);
+         }
     }
+    else
+    {
+        cv::Mat m = cv::imread(imagepath, 1);
+        if (m.empty())
+        {
+            fprintf(stderr, "cv::imread %s failed\n", imagepath);
+            return -1;
+        }
 
 #if NCNN_VULKAN
-    ncnn::create_gpu_instance();
+        ncnn::create_gpu_instance();
 #endif // NCNN_VULKAN
 
-    std::vector<Object> objects;
-    detect_yolov3(m, objects);
+        std::vector<Object> objects;
+        detect_yolov3(m, objects);
 
 #if NCNN_VULKAN
-    ncnn::destroy_gpu_instance();
+        ncnn::destroy_gpu_instance();
 #endif // NCNN_VULKAN
 
-    draw_objects(m, objects);
-
+        draw_objects(m, objects, use_video);        
+    }
     return 0;
 }

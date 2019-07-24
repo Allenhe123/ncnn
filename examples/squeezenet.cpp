@@ -15,6 +15,8 @@
 #include <stdio.h>
 #include <algorithm>
 #include <vector>
+#include <fstream>
+#include <iostream>
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
 
@@ -56,7 +58,33 @@ static int detect_squeezenet(const cv::Mat& bgr, std::vector<float>& cls_scores)
     return 0;
 }
 
-static int print_topk(const std::vector<float>& cls_scores, int topk)
+void load_labels(std::string& lablelfile, std::vector<std::string>& ivec)
+{
+    std::ifstream ifs;
+    ifs.open(lablelfile.c_str());
+    if (ifs.is_open())
+    {
+        std::string temp;
+        std::string line;
+        while (std::getline(ifs, line))
+        {
+            std::string::size_type pos = line.find_first_of(" ");
+            if (pos != std::string::npos)
+            {
+                std::string rhs = line.substr(pos + 1, line.size() - pos - 1);
+                ivec.push_back(rhs);
+            }
+            else
+            {
+                std::cout << "load label ERROR!" << std::endl;
+            }
+        }
+        ifs.close();
+    }
+}
+
+
+static std::string print_topk(const std::vector<float>& cls_scores, int topk)
 {
     // partial sort topk with index
     int size = cls_scores.size();
@@ -70,15 +98,20 @@ static int print_topk(const std::vector<float>& cls_scores, int topk)
     std::partial_sort(vec.begin(), vec.begin() + topk, vec.end(),
                       std::greater< std::pair<float, int> >());
 
+    std::string labelfile("synset_words.txt");
+    std::vector<std::string> labels;
+    load_labels(labelfile, labels);
+
     // print topk and score
     for (int i=0; i<topk; i++)
     {
         float score = vec[i].first;
         int index = vec[i].second;
-        fprintf(stderr, "%d = %f\n", index, score);
+        std::string labelname = labels[index];
+        fprintf(stderr, "%d = %f, name: %s\n", index, score, labelname.c_str());
     }
 
-    return 0;
+    return labels[vec[0].second];
 }
 
 int main(int argc, char** argv)
@@ -109,7 +142,24 @@ int main(int argc, char** argv)
     ncnn::destroy_gpu_instance();
 #endif // NCNN_VULKAN
 
-    print_topk(cls_scores, 3);
+    std::string labelname = print_topk(cls_scores, 3);
+
+    //获取文本框的长宽
+    int baseline = 0;
+	cv::Size text_size = cv::getTextSize(labelname, cv::FONT_HERSHEY_SIMPLEX, 1, 1, &baseline);
+	//文本框位置
+	cv::Point origin; 
+	origin.x = 10;
+    origin.y = text_size.height  + 10;
+    cv::putText(m, labelname, origin, cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0, 0, 255), 1, 8, 0);
+
+    cv::imshow("img", m);
+
+    int code = cv::waitKey(0);
+    if (code == 'q')
+    {
+        return 0;
+    }
 
     return 0;
 }
